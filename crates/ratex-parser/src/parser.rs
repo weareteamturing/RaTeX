@@ -1254,16 +1254,41 @@ fn is_valid_unit(unit: &str) -> bool {
     )
 }
 
+/// `str::trim` but keeps one trailing space when it is the argument of a control space.
+///
+/// TeX's control space is the two-character sequence `\\ ` (backslash + whitespace); the
+/// whitespace is part of the token, not padding.  A plain `trim_end` on `x \\ ` leaves
+/// `x \\`, which the lexer then reads as a bare backslash at end of input and the parser
+/// rejects with "Undefined control sequence".  KaTeX renders `x \\ ` fine, and 386 of the
+/// formulas in our CMS end exactly that way, so keep the space that the token owns.
+///
+/// A backslash only starts a control sequence if it is not itself escaped, hence the
+/// odd-count check on the run of trailing backslashes (`x \\\\ ` is an escaped backslash
+/// followed by ordinary padding and trims normally).
+fn trim_keeping_control_space(input: &str) -> &str {
+    let s = input.trim_start();
+    let t = s.trim_end();
+    if t.len() == s.len() {
+        return t; // nothing was trimmed
+    }
+    let backslashes = t.bytes().rev().take_while(|b| *b == b'\\').count();
+    if backslashes % 2 == 1 {
+        // The trimmed-off whitespace is ASCII, so t.len() + 1 is a char boundary.
+        return &s[..t.len() + 1];
+    }
+    t
+}
+
 /// If the whole expression is wrapped in TeX inline/display math delimiters, parse the inside only.
 /// The parser already runs in math mode; a leading `$` would otherwise hit the `$` / `\\(` "switch to math"
 /// handler, which is disallowed in math mode (see `functions::math`).
 fn strip_outer_math_delimiters(input: &str) -> &str {
-    let s = input.trim();
+    let s = trim_keeping_control_space(input);
     if s.len() >= 4 && s.starts_with("$$") && s.ends_with("$$") {
-        return s[2..s.len() - 2].trim();
+        return trim_keeping_control_space(&s[2..s.len() - 2]);
     }
     if s.len() >= 2 && s.starts_with('$') && s.ends_with('$') {
-        return s[1..s.len() - 1].trim();
+        return trim_keeping_control_space(&s[1..s.len() - 1]);
     }
     s
 }
@@ -1276,6 +1301,29 @@ pub fn parse(input: &str) -> ParseResult<Vec<ParseNode>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A formula ending in a control space (`\ `) must parse.  386 formulas in the
+    /// mathking CMS end that way and KaTeX renders all of them.
+    #[test]
+    fn test_trailing_control_space_is_preserved() {
+        assert!(parse(r"a,\ ").is_ok());
+        assert!(parse(r"$a,\ $").is_ok());
+        assert!(parse(r"a,\ x").is_ok());
+    }
+
+    /// An escaped backslash is not a control sequence, so its trailing padding still trims.
+    #[test]
+    fn test_escaped_backslash_still_trims() {
+        assert_eq!(trim_keeping_control_space(r"a \\ "), r"a \\");
+        assert_eq!(trim_keeping_control_space(r"a \ "), r"a \ ");
+        assert_eq!(trim_keeping_control_space("  a  "), "a");
+    }
+
+    /// A bare trailing backslash is still an error — KaTeX rejects it too.
+    #[test]
+    fn test_bare_backslash_still_errors() {
+        assert!(parse(r"\").is_err());
+    }
 
     #[test]
     fn test_parse_single_char() {

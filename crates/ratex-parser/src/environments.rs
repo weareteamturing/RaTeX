@@ -449,11 +449,14 @@ fn register_array(map: &mut HashMap<&'static str, EnvSpec>) {
             }
         }
 
-        let max_num_cols = cols.len();
+        // KaTeX does not pass maxNumCols for `array`, so a row may hold more `&` than the
+        // column spec declares.  Real-world CMS content relies on that — for example
+        // `\\begin{array}{l}x+y=14& \\cdots\\ \\text{a}\\\\ …` annotates a single-column
+        // array with `&`.  Enforcing the limit here rejects the whole formula.
         let config = ArrayConfig {
             cols: Some(cols),
             hskip_before_and_after: Some(true),
-            max_num_cols: Some(max_num_cols),
+            max_num_cols: None,
             ..Default::default()
         };
         parse_array(ctx.parser, config, d_cell_style(&ctx.env_name))
