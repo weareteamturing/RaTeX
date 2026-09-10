@@ -82,6 +82,18 @@ class RaTeXInlineView @JvmOverloads constructor(
             updateTextLayout()
         }
 
+    /**
+     * Baseline-to-baseline distance in points, matching CSS `line-height`.
+     * 0 keeps the font's natural spacing.
+     */
+    var textLineHeight: Float = 0f
+        set(value) {
+            if (field == value) return
+            field = value
+            lastLayoutWidth = -1
+            updateTextLayout()
+        }
+
     var textItalic: Boolean = false
         set(value) {
             if (field == value) return
@@ -196,7 +208,7 @@ class RaTeXInlineView @JvmOverloads constructor(
         val layout = StaticLayout.Builder
             .obtain(spannable, 0, spannable.length, textPaint, availWidth)
             .setAlignment(android.text.Layout.Alignment.ALIGN_NORMAL)
-            .setLineSpacing(0f, 1f)
+            .setLineSpacing(extraLineSpacing(density), 1f)
             .setIncludePad(true)
             .build()
 
@@ -207,6 +219,19 @@ class RaTeXInlineView @JvmOverloads constructor(
         val widthDp = layout.width.toDouble() / density
         val heightDp = layout.height.toDouble() / density
         reportContentSize(widthDp, heightDp)
+    }
+
+    /**
+     * StaticLayout 은 줄높이를 직접 못 받는다. 요청 줄높이에서 폰트가 스스로 쓰는
+     * 행간을 뺀 나머지를 줄 사이 여백으로 넘긴다. 요청값이 자연 행간보다 작으면 0 —
+     * 글자가 겹치게 만들지는 않는다.
+     */
+    private fun extraLineSpacing(density: Float): Float {
+        if (textLineHeight <= 0f) return 0f
+        val fm = textPaint.fontMetrics
+        val natural = fm.descent - fm.ascent
+        val requested = textLineHeight * density
+        return (requested - natural).coerceAtLeast(0f)
     }
 
     private fun ensureMeasuredLayout(widthMeasureSpec: Int): StaticLayout? {
@@ -238,7 +263,7 @@ class RaTeXInlineView @JvmOverloads constructor(
         val measuredLayout = StaticLayout.Builder
             .obtain(spannable, 0, spannable.length, textPaint, targetWidth)
             .setAlignment(android.text.Layout.Alignment.ALIGN_NORMAL)
-            .setLineSpacing(0f, 1f)
+            .setLineSpacing(extraLineSpacing(density), 1f)
             .setIncludePad(true)
             .build()
 

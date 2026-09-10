@@ -21,6 +21,11 @@ export interface NativeProps extends ViewProps {
   textFontSize?: Float;
   /** Plain-text font family. */
   textFontFamily?: string;
+  /**
+   * Distance between text baselines (points), matching CSS `line-height`.
+   * 0 (default) keeps the font's natural line spacing.
+   */
+  textLineHeight?: Float;
   /** Plain-text italic style. */
   textItalic?: boolean;
   /** Plain-text underline decoration. */

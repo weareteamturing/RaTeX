@@ -54,6 +54,11 @@ public class RaTeXInlineRNView: PlatformView {
         set { innerView.textFontFamily = newValue as String?; invalidateIntrinsicContentSize(); platformSetNeedsLayout() }
     }
 
+    @objc public var textLineHeight: CGFloat {
+        get { innerView.textLineHeight }
+        set { innerView.textLineHeight = newValue; invalidateIntrinsicContentSize(); platformSetNeedsLayout() }
+    }
+
     @objc public var textItalic: Bool {
         get { innerView.textItalic }
         set { innerView.textItalic = newValue; invalidateIntrinsicContentSize(); platformSetNeedsLayout() }

@@ -46,6 +46,12 @@ public class RaTeXInlineView: PlatformView {
         }
     }
 
+    /// Baseline-to-baseline distance in points, matching CSS `line-height`.
+    /// 0 keeps the font's natural spacing.
+    public var textLineHeight: CGFloat = 0 {
+        didSet { guard textLineHeight != oldValue else { return }; rebuild() }
+    }
+
     public var textItalic: Bool = false {
         didSet { guard textItalic != oldValue else { return }; rebuild() }
     }
@@ -218,6 +224,18 @@ public class RaTeXInlineView: PlatformView {
         }
         if textLineThrough {
             textAttrs[.strikethroughStyle] = NSUnderlineStyle.single.rawValue
+        }
+        if textLineHeight > 0 {
+            // min == max 로 고정해야 CSS line-height 처럼 줄마다 같은 높이가 된다.
+            // 수식 첨자로 줄이 높아지는 것까지 눌러버리지 않도록, 요청값이
+            // 폰트 자연 행간보다 클 때만 적용한다.
+            let natural = textFont.lineHeight
+            if textLineHeight > natural {
+                let paragraph = NSMutableParagraphStyle()
+                paragraph.minimumLineHeight = textLineHeight
+                paragraph.maximumLineHeight = textLineHeight
+                textAttrs[.paragraphStyle] = paragraph
+            }
         }
 
         for segment in segments {

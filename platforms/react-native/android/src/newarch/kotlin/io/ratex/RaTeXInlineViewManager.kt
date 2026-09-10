@@ -69,6 +69,11 @@ class RaTeXInlineViewManager(private val reactContext: ReactApplicationContext) 
         view.textFontFamily = value
     }
 
+    @ReactProp(name = "textLineHeight", defaultFloat = 0f)
+    override fun setTextLineHeight(view: RaTeXInlineView, value: Float) {
+        view.textLineHeight = value
+    }
+
     @ReactProp(name = "textItalic", defaultBoolean = false)
     override fun setTextItalic(view: RaTeXInlineView, value: Boolean) {
         view.textItalic = value

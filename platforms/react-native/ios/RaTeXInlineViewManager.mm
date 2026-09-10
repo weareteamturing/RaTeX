@@ -125,6 +125,11 @@ using namespace facebook::react;
     _nativeView.textFontSize = textFontSize;
   }
 
+  CGFloat textLineHeight = static_cast<CGFloat>(newProps.textLineHeight);
+  if (textLineHeight != _nativeView.textLineHeight) {
+    _nativeView.textLineHeight = textLineHeight;
+  }
+
   NSString *textFontFamily = nil;
   if (!newProps.textFontFamily.empty()) {
     textFontFamily =
@@ -196,6 +201,7 @@ RCT_EXPORT_VIEW_PROPERTY(textColor, UIColor)
 #endif
 RCT_EXPORT_VIEW_PROPERTY(textFontSize, CGFloat)
 RCT_EXPORT_VIEW_PROPERTY(textFontFamily, NSString)
+RCT_EXPORT_VIEW_PROPERTY(textLineHeight, CGFloat)
 RCT_EXPORT_VIEW_PROPERTY(textItalic, BOOL)
 RCT_EXPORT_VIEW_PROPERTY(textUnderline, BOOL)
 RCT_EXPORT_VIEW_PROPERTY(textLineThrough, BOOL)

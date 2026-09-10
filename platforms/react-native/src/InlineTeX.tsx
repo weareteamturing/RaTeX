@@ -46,6 +46,10 @@ export function InlineTeX({
     typeof flatTextStyle?.fontFamily === 'string' && flatTextStyle.fontFamily.trim().length > 0
       ? flatTextStyle.fontFamily
       : undefined;
+  const textLineHeight =
+    typeof flatTextStyle?.lineHeight === 'number' && flatTextStyle.lineHeight > 0
+      ? flatTextStyle.lineHeight
+      : undefined;
   const textItalic = flatTextStyle?.fontStyle === 'italic';
   const rawDecorationLine = flatTextStyle?.textDecorationLine;
   const decorationLine = Array.isArray(rawDecorationLine)
@@ -70,6 +74,7 @@ export function InlineTeX({
     textColor,
     textFontSize,
     textFontFamily,
+    textLineHeight,
     textItalic,
     textUnderline,
     textLineThrough,
@@ -91,9 +96,9 @@ export function InlineTeX({
   const hasExplicitAlignSelf = flatStyle?.alignSelf != null;
 
   const estimatedHeight = useMemo(() => {
-    const lineHeight = Math.ceil(textFontSize * 1.4);
+    const lineHeight = textLineHeight ?? Math.ceil(textFontSize * 1.4);
     return lineHeight;
-  }, [textFontSize]);
+  }, [textFontSize, textLineHeight]);
 
   const hasRenderableContent = content.trim().length > 0;
   const heightValue = hasRenderableContent
@@ -121,6 +126,7 @@ export function InlineTeX({
       textColor={textColor}
       textFontSize={textFontSize}
       textFontFamily={textFontFamily}
+      textLineHeight={textLineHeight}
       textItalic={textItalic}
       textUnderline={textUnderline}
       textLineThrough={textLineThrough}
