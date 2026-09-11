@@ -225,19 +225,6 @@ public class RaTeXInlineView: PlatformView {
         if textLineThrough {
             textAttrs[.strikethroughStyle] = NSUnderlineStyle.single.rawValue
         }
-        if textLineHeight > 0 {
-            // min == max 로 고정해야 CSS line-height 처럼 줄마다 같은 높이가 된다.
-            // 수식 첨자로 줄이 높아지는 것까지 눌러버리지 않도록, 요청값이
-            // 폰트 자연 행간보다 클 때만 적용한다.
-            let natural = textFont.lineHeight
-            if textLineHeight > natural {
-                let paragraph = NSMutableParagraphStyle()
-                paragraph.minimumLineHeight = textLineHeight
-                paragraph.maximumLineHeight = textLineHeight
-                textAttrs[.paragraphStyle] = paragraph
-            }
-        }
-
         for segment in segments {
             switch segment {
             case .text(let str):
@@ -248,6 +235,26 @@ public class RaTeXInlineView: PlatformView {
                 } else {
                     result.append(NSAttributedString(string: "$\(latex)$", attributes: textAttrs))
                 }
+            }
+        }
+
+        if textLineHeight > 0 {
+            // CSS line-height 처럼 줄의 최소 높이만 정한다. 최대는 두지 않는다 —
+            // 분수처럼 높은 수식이 있는 줄은 CSS 도 줄 상자를 키우지 자르지 않는다.
+            // 폰트 자연 행간보다 클 때만 적용한다.
+            //
+            // 문단 스타일은 문단 첫 글자의 것을 쓴다. 텍스트 런에만 붙이면
+            // 수식으로 시작하는 문단("$a$\n$b$")은 스타일이 없어 자연 행간으로 돌아간다(실측).
+            // 그래서 텍스트·첨부를 가리지 않고 전체 범위에 붙인다.
+            let natural = textFont.lineHeight
+            if textLineHeight > natural {
+                let paragraph = NSMutableParagraphStyle()
+                paragraph.minimumLineHeight = textLineHeight
+                result.addAttribute(
+                    .paragraphStyle,
+                    value: paragraph,
+                    range: NSRange(location: 0, length: result.length)
+                )
             }
         }
         return result
