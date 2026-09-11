@@ -85,7 +85,11 @@ public enum RaTeXError: Error, LocalizedError {
 /// ```
 public final class RaTeXEngine {
     public static let shared = RaTeXEngine()
-    private init() {}
+
+    private init() {
+        // Must precede the first parse: the Rust core caches its Unicode fallback font once.
+        RaTeXUnicodeFont.configureFromInfoPlist()
+    }
 
     #if os(macOS)
     public func parse(

@@ -11,9 +11,12 @@ class RaTeXPackage : ReactPackage {
     override fun createNativeModules(reactContext: ReactApplicationContext): List<NativeModule> =
         emptyList()
 
-    override fun createViewManagers(reactContext: ReactApplicationContext): List<ViewManager<*, *>> =
-        listOf<ViewManager<*, *>>(
+    override fun createViewManagers(reactContext: ReactApplicationContext): List<ViewManager<*, *>> {
+        // Must precede the first render: the Rust core caches its Unicode fallback font once.
+        RaTeXUnicodeFont.configureFromManifest(reactContext)
+        return listOf<ViewManager<*, *>>(
             RaTeXViewManager(reactContext),
             RaTeXInlineViewManager(reactContext),
         )
+    }
 }
