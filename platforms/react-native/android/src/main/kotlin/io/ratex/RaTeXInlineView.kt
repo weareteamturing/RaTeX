@@ -216,9 +216,22 @@ class RaTeXInlineView @JvmOverloads constructor(
         requestLayout()
         invalidate()
 
-        val widthDp = layout.width.toDouble() / density
+        val widthDp = usedWidthPx(layout) / density
         val heightDp = layout.height.toDouble() / density
         reportContentSize(widthDp, heightDp)
+    }
+
+    /**
+     * 실제 글이 차지한 폭(가장 긴 줄). iOS 가 usedRect.width 로 보고하는 것과 같은 값이다.
+     * StaticLayout.width 는 쪼갤 때 준 컨테이너 폭이라, 한 줄짜리 짧은 내용도 컨테이너 폭으로 보고돼
+     * 호출측이 "자연 폭"을 알 수 없었다.
+     */
+    private fun usedWidthPx(layout: StaticLayout): Double {
+        var max = 0f
+        for (i in 0 until layout.lineCount) {
+            max = maxOf(max, layout.getLineWidth(i))
+        }
+        return Math.ceil(max.toDouble())
     }
 
     /**
@@ -270,7 +283,7 @@ class RaTeXInlineView @JvmOverloads constructor(
         staticLayout = measuredLayout
         lastLayoutWidth = targetWidth
 
-        val widthDp = measuredLayout.width.toDouble() / density
+        val widthDp = usedWidthPx(measuredLayout) / density
         val heightDp = measuredLayout.height.toDouble() / density
         reportContentSize(widthDp, heightDp)
         return measuredLayout

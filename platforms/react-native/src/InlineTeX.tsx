@@ -19,6 +19,12 @@ export interface InlineTeXProps {
   textStyle?: StyleProp<TextStyle>;
   /** Style applied to the container view. */
   style?: StyleProp<ViewStyle>;
+  /**
+   * Fired when the native text layout settles. `width` is the used width
+   * (longest line), so a single-line content reports its natural width even
+   * when the view itself is stretched wider.
+   */
+  onContentSizeChange?: (size: {width: number; height: number}) => void;
 }
 
 /**
@@ -35,6 +41,7 @@ export function InlineTeX({
   color,
   textStyle,
   style,
+  onContentSizeChange,
 }: InlineTeXProps): React.JSX.Element {
   const inheritedColor = useContext(RaTeXColorContext);
   const resolvedColor = color ?? inheritedColor;
@@ -82,12 +89,14 @@ export function InlineTeX({
 
   const handleContentSizeChange = useCallback(
     (e: {nativeEvent: {width: number; height: number}}) => {
-      setContentSize({
+      const size = {
         width: e.nativeEvent.width,
         height: e.nativeEvent.height,
-      });
+      };
+      setContentSize(size);
+      onContentSizeChange?.(size);
     },
-    [],
+    [onContentSizeChange],
   );
 
   const flatStyle = StyleSheet.flatten(style) as ViewStyle | undefined;
