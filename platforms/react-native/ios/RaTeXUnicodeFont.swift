@@ -1,6 +1,7 @@
 // RaTeXUnicodeFont.swift — lets the host app choose the font RaTeX uses for glyphs
 // outside the KaTeX fonts (CJK text inside $…$, for example).
 
+import CoreText
 import Foundation
 
 /// The Rust core falls back to a *system sans* font for any character the KaTeX fonts
@@ -19,6 +20,12 @@ enum RaTeXUnicodeFont {
     private static let plistKey = "RaTeXUnicodeFont"
     private static let envKey = "RATEX_UNICODE_FONT"
 
+    /// PostScript name the renderer draws `CJK-Regular` glyphs with. The Rust core only lays
+    /// glyphs out (it reads the same file through RATEX_UNICODE_FONT for advance widths);
+    /// drawing happens in RaTeXRenderer with CoreText, so the face has to be chosen here too.
+    /// Nil = CoreText's own cascade (system sans for CJK).
+    private(set) static var postScriptName: String?
+
     static func configureFromInfoPlist() {
         guard let name = Bundle.main.object(forInfoDictionaryKey: plistKey) as? String,
               !name.isEmpty
@@ -30,5 +37,16 @@ enum RaTeXUnicodeFont {
             return
         }
         setenv(envKey, path, 1)
+
+        let url = URL(fileURLWithPath: path)
+        if let descriptors = CTFontManagerCreateFontDescriptorsFromURL(url as CFURL) as? [CTFontDescriptor],
+           let first = descriptors.first,
+           let name = CTFontDescriptorCopyAttribute(first, kCTFontNameAttribute) as? String {
+            // Register in case the app did not list it under UIAppFonts. Errors (already registered) are fine.
+            if !RaTeXFontLoader.isFontRegistered(name) {
+                CTFontManagerRegisterFontsForURL(url as CFURL, .process, nil)
+            }
+            postScriptName = name
+        }
     }
 }

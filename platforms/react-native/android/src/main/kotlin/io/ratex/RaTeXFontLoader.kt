@@ -98,7 +98,10 @@ object RaTeXFontLoader {
      * coverage on all Android versions (Noto / Roboto / HarmonyOS Sans / MiLan Pro).
      */
     private fun resolveSystemFallback(fontId: String): Typeface? = when (fontId) {
-        "CJK-Regular", "CJK-Fallback", "Emoji-Fallback" -> Typeface.DEFAULT
+        // The host app may pick the primary CJK face (see RaTeXUnicodeFont); the second-level
+        // fallback and emoji stay on the system default.
+        "CJK-Regular" -> RaTeXUnicodeFont.typeface ?: Typeface.DEFAULT
+        "CJK-Fallback", "Emoji-Fallback" -> Typeface.DEFAULT
         else -> null
     }
 

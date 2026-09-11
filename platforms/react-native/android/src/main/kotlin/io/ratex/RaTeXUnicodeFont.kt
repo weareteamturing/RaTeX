@@ -5,6 +5,7 @@ package io.ratex
 
 import android.content.Context
 import android.content.pm.PackageManager
+import android.graphics.Typeface
 import android.system.Os
 import android.util.Log
 import java.io.File
@@ -31,20 +32,41 @@ object RaTeXUnicodeFont {
 
     @Volatile private var configured = false
 
+    /**
+     * Typeface the renderer draws `CJK-Regular` glyphs with. The Rust core only lays glyphs out
+     * (it reads the same file through RATEX_UNICODE_FONT for advance widths); drawing happens
+     * here with Canvas, so the Typeface has to be chosen here too. Null = system default.
+     */
+    @Volatile var typeface: Typeface? = null
+        private set
+
     @JvmStatic
     fun configureFromManifest(context: Context) {
         if (configured) return
         configured = true
         val assetPath = readMeta(context) ?: return
         try {
-            val target = File(File(context.filesDir, "ratex"), File(assetPath).name)
-            val size = context.assets.openFd(assetPath).use { it.length }
-            if (!target.exists() || target.length() != size) {
-                target.parentFile?.mkdirs()
-                context.assets.open(assetPath).use { input ->
-                    target.outputStream().use { output -> input.copyTo(output) }
-                }
+            typeface = Typeface.createFromAsset(context.assets, assetPath)
+            // Assets are usually compressed in the APK, so openFd()/length are unavailable —
+            // copy through a stream and keep a small stamp file with the copied size so an
+            // updated font (new size) replaces the old copy.
+            val dir = File(context.filesDir, "ratex")
+            val target = File(dir, File(assetPath).name)
+            val stamp = File(dir, target.name + ".size")
+            val tmp = File(dir, target.name + ".tmp")
+            dir.mkdirs()
+            tmp.delete()
+            val copied = context.assets.open(assetPath).use { input ->
+                tmp.outputStream().use { output -> input.copyTo(output) }
             }
+            val current = stamp.takeIf { it.exists() }?.readText()?.toLongOrNull()
+            if (!target.exists() || current != copied) {
+                if (!tmp.renameTo(target)) {
+                    tmp.copyTo(target, overwrite = true)
+                }
+                stamp.writeText(copied.toString())
+            }
+            tmp.delete()
             Os.setenv(ENV_KEY, target.absolutePath, true)
         } catch (e: Exception) {
             Log.w(TAG, "could not configure $ENV_KEY from asset '$assetPath'", e)

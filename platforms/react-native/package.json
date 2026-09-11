@@ -1,6 +1,6 @@
 {
   "name": "ratex-react-native",
-  "version": "0.1.13-mathking.4",
+  "version": "0.1.13-mathking.5",
   "description": "Native LaTeX rendering for React Native (no WebView)",
   "main": "lib/index.js",
   "react-native": "src/index.ts",

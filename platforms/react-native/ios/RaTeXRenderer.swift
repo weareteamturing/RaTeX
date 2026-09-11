@@ -57,7 +57,12 @@ public struct RaTeXRenderer {
 
     /// Map RaTeX font ID ("Math-Italic") to the KaTeX PostScript name ("KaTeX_Math-Italic").
     private func postScriptName(for fontId: String) -> String {
-        "KaTeX_\(fontId)"
+        // The host app may pick the primary CJK face (see RaTeXUnicodeFont). Otherwise the
+        // made-up "KaTeX_CJK-Regular" name makes CoreText fall through its own cascade.
+        if fontId == "CJK-Regular", let name = RaTeXUnicodeFont.postScriptName {
+            return name
+        }
+        return "KaTeX_\(fontId)"
     }
 
     private func drawGlyph(_ g: GlyphPathData, in ctx: CGContext, fontCache: inout [String: CTFont]) {
