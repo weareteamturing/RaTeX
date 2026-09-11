@@ -87,16 +87,25 @@ class RaTeXTextAttachment: NSTextAttachment {
         self.bounds = CGRect(origin: .zero, size: size)
         attachmentCell = RaTeXTextAttachmentCell(renderer: renderer)
         #else
+        // Snap the bitmap to the pixel grid. The layout gives fractional sizes and a fractional
+        // depth; a bitmap drawn at a fractional size and placed at a fractional baseline offset is
+        // resampled when TextKit composites it, which softens every edge (measured: fewer fully
+        // black pixels and more mid-grays than the same glyphs drawn by WebKit).
+        let scale = UIScreen.main.scale
+        let snapUp = { (v: CGFloat) in ceil(v * scale) / scale }
+        let snap = { (v: CGFloat) in (v * scale).rounded() / scale }
+        let bitmapSize = CGSize(width: snapUp(size.width), height: snapUp(size.height))
+
         let format = UIGraphicsImageRendererFormat()
-        format.scale = UIScreen.main.scale
-        let imageRenderer = UIGraphicsImageRenderer(size: size, format: format)
+        format.scale = scale
+        let imageRenderer = UIGraphicsImageRenderer(size: bitmapSize, format: format)
         self.image = imageRenderer.image { ctx in
             renderer.draw(in: ctx.cgContext)
         }
 
         // origin.y = -depth shifts the image down so the formula baseline
         // (at `height` from the top) aligns with the text baseline.
-        self.bounds = CGRect(x: 0, y: -renderer.depth, width: size.width, height: size.height)
+        self.bounds = CGRect(x: 0, y: -snap(renderer.depth), width: bitmapSize.width, height: bitmapSize.height)
         #endif
     }
 
