@@ -1,4 +1,4 @@
-import React, {useCallback, useContext, useEffect, useMemo, useState} from 'react';
+import React, {useCallback, useContext, useMemo, useState} from 'react';
 import {Platform, StyleSheet} from 'react-native';
 import type {ColorValue, StyleProp, TextStyle, ViewStyle} from 'react-native';
 import RaTeXInlineViewNativeComponent from './RaTeXInlineViewNativeComponent';
@@ -81,20 +81,11 @@ export function InlineTeX({
     height: number;
   } | null>(null);
 
-  useEffect(() => {
-    setContentSize(null);
-  }, [
-    content,
-    fontSize,
-    resolvedColor,
-    textColor,
-    textFontSize,
-    textFontFamily,
-    textLineHeight,
-    textItalic,
-    textUnderline,
-    textLineThrough,
-  ]);
+  // The last reported height stays the minHeight until the native view reports the
+  // new one. Resetting it on every content change dropped the view to the one-line
+  // estimate first, so text growing a few characters at a time (a streaming chat
+  // message) shrank and grew back on each update — measured on an Android emulator:
+  // 51 of 105 layouts shorter than the previous one.
 
   const handleContentSizeChange = useCallback(
     (e: {nativeEvent: {width: number; height: number}}) => {
