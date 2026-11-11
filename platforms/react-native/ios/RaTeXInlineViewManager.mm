@@ -8,6 +8,9 @@
 #import <react/renderer/components/RNRaTeXSpec/EventEmitters.h>
 #import <react/renderer/components/RNRaTeXSpec/Props.h>
 #import <react/renderer/components/RNRaTeXSpec/RCTComponentViewHelpers.h>
+#import <react/renderer/core/LayoutConstraints.h>
+#import <react/renderer/core/LayoutContext.h>
+#include <cmath>
 #else
 #import "RaTeXInlineViewManager.h"
 #import <React/RCTUIManager.h>
@@ -41,6 +44,69 @@
 
 using namespace facebook::react;
 
+#if !TARGET_OS_OSX
+namespace {
+
+// Measures the text during Yoga layout so the view's height is right on the commit that
+// changes its content. Without a measure function the height came only from JS (a one-line
+// estimate, then onContentSizeChange after the native layout), so every content change first
+// dropped the view to one line and then grew it back — visible as jitter while a chat message
+// streams in. RaTeXInlineMeasure builds the same attributed string RaTeXInlineView draws and
+// is safe to call off the main thread.
+class RaTeXInlineViewMeasuringShadowNode final : public RaTeXInlineViewShadowNode {
+ public:
+  using RaTeXInlineViewShadowNode::RaTeXInlineViewShadowNode;
+
+  static ShadowNodeTraits BaseTraits() {
+    auto traits = RaTeXInlineViewShadowNode::BaseTraits();
+    traits.set(ShadowNodeTraits::Trait::LeafYogaNode);
+    traits.set(ShadowNodeTraits::Trait::MeasurableYogaNode);
+    return traits;
+  }
+
+  facebook::react::Size measureContent(const LayoutContext &layoutContext,
+                                       const LayoutConstraints &layoutConstraints) const override {
+    const auto &props = getConcreteProps();
+    if (props.content.empty()) {
+      return layoutConstraints.clamp(facebook::react::Size{0, 0});
+    }
+    CGSize measured = CGSizeZero;
+    @autoreleasepool {
+      NSString *content = [NSString stringWithUTF8String:props.content.c_str()];
+      if (content == nil) {
+        return layoutConstraints.clamp(facebook::react::Size{0, 0});
+      }
+      NSString *family = props.textFontFamily.empty()
+          ? nil
+          : [NSString stringWithUTF8String:props.textFontFamily.c_str()];
+      // Same defaults the component view falls back to when a size prop is 0 (unset).
+      CGFloat fontSize = props.fontSize > 0 ? static_cast<CGFloat>(props.fontSize) : 16;
+      CGFloat textFontSize = props.textFontSize > 0 ? static_cast<CGFloat>(props.textFontSize) : 16;
+      Float maxWidth = layoutConstraints.maximumSize.width;
+      CGFloat width = std::isfinite(maxWidth) && maxWidth > 0 ? static_cast<CGFloat>(maxWidth)
+                                                              : CGFLOAT_MAX;
+      measured = [RaTeXInlineMeasure measureContent:content
+                                           fontSize:fontSize
+                                       textFontSize:textFontSize
+                                     textFontFamily:family
+                                     textLineHeight:static_cast<CGFloat>(props.textLineHeight)
+                                         textItalic:props.textItalic ? YES : NO
+                                      textUnderline:props.textUnderline ? YES : NO
+                                    textLineThrough:props.textLineThrough ? YES : NO
+                                           maxWidth:width
+                                              scale:static_cast<CGFloat>(layoutContext.pointScaleFactor)];
+    }
+    return layoutConstraints.clamp(
+        facebook::react::Size{static_cast<Float>(measured.width), static_cast<Float>(measured.height)});
+  }
+};
+
+using RaTeXInlineViewMeasuringComponentDescriptor =
+    ConcreteComponentDescriptor<RaTeXInlineViewMeasuringShadowNode>;
+
+}  // namespace
+#endif
+
 @interface RaTeXInlineViewComponentView : RCTViewComponentView
 @end
 
@@ -50,7 +116,11 @@ using namespace facebook::react;
 
 + (ComponentDescriptorProvider)componentDescriptorProvider
 {
+#if TARGET_OS_OSX
   return concreteComponentDescriptorProvider<RaTeXInlineViewComponentDescriptor>();
+#else
+  return concreteComponentDescriptorProvider<RaTeXInlineViewMeasuringComponentDescriptor>();
+#endif
 }
 
 - (instancetype)initWithFrame:(CGRect)frame

@@ -97,8 +97,7 @@ public class RaTeXInlineView: PlatformView {
         isOpaque = false
         contentMode = .redraw
         #endif
-        textContainer.lineFragmentPadding = 0
-        textContainer.lineBreakMode = .byWordWrapping
+        RaTeXInlineLayout.configure(textContainer)
         layoutManager.addTextContainer(textContainer)
         textStorage.addLayoutManager(layoutManager)
     }
@@ -151,13 +150,9 @@ public class RaTeXInlineView: PlatformView {
     // MARK: - Content size
 
     private func reportContentSizeIfNeeded() {
-        let usedRect = textStorage.length > 0
-            ? layoutManager.usedRect(for: textContainer)
+        let size = textStorage.length > 0
+            ? RaTeXInlineLayout.usedSize(layoutManager, textContainer)
             : .zero
-        let size = CGSize(
-            width: max(0, ceil(usedRect.width)),
-            height: max(0, ceil(usedRect.height))
-        )
         updateContentSize(size)
     }
 
@@ -211,281 +206,20 @@ public class RaTeXInlineView: PlatformView {
     }
 
     private func buildAttributedString() -> NSAttributedString {
-        let segments = Self.parseContent(content)
-        let result = NSMutableAttributedString()
-
-        let textFont = makeTextFont()
-        var textAttrs: [NSAttributedString.Key: Any] = [
-            .font: textFont,
-            .foregroundColor: textColor,
-        ]
-        if textUnderline {
-            textAttrs[.underlineStyle] = NSUnderlineStyle.single.rawValue
-        }
-        if textLineThrough {
-            textAttrs[.strikethroughStyle] = NSUnderlineStyle.single.rawValue
-        }
-        for segment in segments {
-            switch segment {
-            case .text(let str):
-                result.append(NSAttributedString(string: str, attributes: textAttrs))
-            case .formula(let latex):
-                if let attachment = makeFormulaAttachment(latex) {
-                    result.append(NSAttributedString(attachment: attachment))
-                } else {
-                    result.append(NSAttributedString(string: "$\(latex)$", attributes: textAttrs))
-                }
-            }
-        }
-
-        if textLineHeight > 0 {
-            // CSS line-height 처럼 줄의 최소 높이만 정한다. 최대는 두지 않는다 —
-            // 분수처럼 높은 수식이 있는 줄은 CSS 도 줄 상자를 키우지 자르지 않는다.
-            // 폰트 자연 행간보다 클 때만 적용한다.
-            //
-            // 문단 스타일은 문단 첫 글자의 것을 쓴다. 텍스트 런에만 붙이면
-            // 수식으로 시작하는 문단("$a$\n$b$")은 스타일이 없어 자연 행간으로 돌아간다(실측).
-            // 그래서 텍스트·첨부를 가리지 않고 전체 범위에 붙인다.
-            let natural = textFont.lineHeight
-            if textLineHeight > natural {
-                let paragraph = NSMutableParagraphStyle()
-                paragraph.minimumLineHeight = textLineHeight
-                result.addAttribute(
-                    .paragraphStyle,
-                    value: paragraph,
-                    range: NSRange(location: 0, length: result.length)
-                )
-            }
-        }
-        return result
-    }
-
-    private func makeTextFont() -> PlatformFont {
-        #if os(macOS)
-        return Self.resolveMacTextFont(
-            family: trimmedTextFontFamily,
-            size: textFontSize,
-            italic: textItalic
+        let style = RaTeXInlineTextStyle(
+            formulaFontSize: formulaFontSize,
+            textFontSize: textFontSize,
+            textFontFamily: trimmedTextFontFamily,
+            textLineHeight: textLineHeight,
+            textItalic: textItalic,
+            textUnderline: textUnderline,
+            textLineThrough: textLineThrough
         )
-        #else
-        return Self.resolveIOSTextFont(
-            family: trimmedTextFontFamily,
-            size: textFontSize,
-            italic: textItalic
-        )
-        #endif
-    }
-
-    #if os(macOS)
-    private static func resolveMacTextFont(
-        family: String?,
-        size: CGFloat,
-        italic: Bool
-    ) -> NSFont {
-        guard let family, !family.isEmpty else {
-            return italic
-                ? NSFontManager.shared.convert(NSFont.systemFont(ofSize: size), toHaveTrait: .italicFontMask)
-                : NSFont.systemFont(ofSize: size)
-        }
-
-        if let font = bestMacFont(from: macFontNames(for: family), size: size, italic: italic) {
-            return font
-        }
-        if let font = NSFont(name: family, size: size) {
-            return italic ? macFontByApplyingItalic(font, size: size) : font
-        }
-        if let font = bestMacFont(from: fuzzyMacFontNames(matching: family), size: size, italic: italic) {
-            return font
-        }
-
-        return italic
-            ? NSFontManager.shared.convert(NSFont.systemFont(ofSize: size), toHaveTrait: .italicFontMask)
-            : NSFont.systemFont(ofSize: size)
-    }
-
-    private static func macFontNames(for family: String) -> [String] {
-        if let members = NSFontManager.shared.availableMembers(ofFontFamily: family), !members.isEmpty {
-            return members.compactMap { $0.first as? String }
-        }
-        let matchedFamily = NSFontManager.shared.availableFontFamilies.first {
-            fontIdentifierMatches($0, family)
-        }
-        guard let matchedFamily,
-              let members = NSFontManager.shared.availableMembers(ofFontFamily: matchedFamily)
-        else { return [] }
-        return members.compactMap { $0.first as? String }
-    }
-
-    private static var fuzzyMacFontNamesCache: [String: [String]] = [:]
-
-    private static func fuzzyMacFontNames(matching query: String) -> [String] {
-        if let cached = fuzzyMacFontNamesCache[query] { return cached }
-        let result = NSFontManager.shared.availableFonts.filter {
-            fontIdentifierMatches($0, query)
-        }
-        fuzzyMacFontNamesCache[query] = result
-        return result
-    }
-
-    private static func bestMacFont(from names: [String], size: CGFloat, italic: Bool) -> NSFont? {
-        names.reduce(nil as NSFont?) { best, name in
-            guard let font = NSFont(name: name, size: size) else { return best }
-            guard let currentBest = best else { return font }
-            return macFontScore(font, italic: italic) < macFontScore(currentBest, italic: italic)
-                ? font : currentBest
-        }.map { italic ? macFontByApplyingItalic($0, size: size) : $0 }
-    }
-
-    private static func macFontScore(_ font: NSFont, italic: Bool) -> Int {
-        var score = isMacItalicFont(font) == italic ? 0 : 1_000
-        let name = font.fontName.lowercased()
-        if italic {
-            if name.contains("italic") || name.contains("oblique") {
-                score -= 100
-            }
-        } else {
-            if name.contains("regular") || name.contains("roman") || name.contains("normal") {
-                score -= 100
-            }
-            if name.contains("bold") || name.contains("black") || name.contains("heavy") {
-                score += 50
-            }
-        }
-        return score
-    }
-
-    private static func isMacItalicFont(_ font: NSFont) -> Bool {
-        NSFontManager.shared.traits(of: font).contains(.italicFontMask)
-    }
-
-    private static func macFontByApplyingItalic(_ font: NSFont, size: CGFloat) -> NSFont {
-        guard !isMacItalicFont(font) else { return font }
-        return NSFontManager.shared.convert(font, toHaveTrait: .italicFontMask)
-    }
-    #else
-    private static func resolveIOSTextFont(
-        family: String?,
-        size: CGFloat,
-        italic: Bool
-    ) -> UIFont {
-        guard let family, !family.isEmpty else {
-            return italic ? UIFont.italicSystemFont(ofSize: size) : UIFont.systemFont(ofSize: size)
-        }
-
-        if let font = bestUIFont(from: iosFontNames(for: family), size: size, italic: italic) {
-            return font
-        }
-        if let font = UIFont(name: family, size: size) {
-            return italic ? uiFontByApplyingItalic(font, size: size) : font
-        }
-        if let font = bestUIFont(from: fuzzyIOSFontNames(matching: family), size: size, italic: italic) {
-            return font
-        }
-
-        return italic ? UIFont.italicSystemFont(ofSize: size) : UIFont.systemFont(ofSize: size)
-    }
-
-    private static func iosFontNames(for family: String) -> [String] {
-        let names = UIFont.fontNames(forFamilyName: family)
-        if !names.isEmpty { return names }
-
-        guard let matchedFamily = UIFont.familyNames.first(where: {
-            fontIdentifierMatches($0, family)
-        }) else { return [] }
-        return UIFont.fontNames(forFamilyName: matchedFamily)
-    }
-
-    private static var fuzzyIOSFontNamesCache: [String: [String]] = [:]
-
-    private static func fuzzyIOSFontNames(matching query: String) -> [String] {
-        if let cached = fuzzyIOSFontNamesCache[query] { return cached }
-        let result = UIFont.familyNames
-            .flatMap { UIFont.fontNames(forFamilyName: $0) }
-            .filter { fontIdentifierMatches($0, query) }
-        fuzzyIOSFontNamesCache[query] = result
-        return result
-    }
-
-    private static func bestUIFont(from names: [String], size: CGFloat, italic: Bool) -> UIFont? {
-        names.reduce(nil as UIFont?) { best, name in
-            guard let font = UIFont(name: name, size: size) else { return best }
-            guard let currentBest = best else { return font }
-            return uiFontScore(font, italic: italic) < uiFontScore(currentBest, italic: italic)
-                ? font : currentBest
-        }.map { italic ? uiFontByApplyingItalic($0, size: size) : $0 }
-    }
-
-    private static func uiFontScore(_ font: UIFont, italic: Bool) -> Int {
-        var score = isUIItalicFont(font) == italic ? 0 : 1_000
-        let name = font.fontName.lowercased()
-        if italic {
-            if name.contains("italic") || name.contains("oblique") {
-                score -= 100
-            }
-        } else {
-            if name.contains("regular") || name.contains("roman") || name.contains("normal") {
-                score -= 100
-            }
-            if name.contains("bold") || name.contains("black") || name.contains("heavy") {
-                score += 50
-            }
-        }
-        return score
-    }
-
-    private static func isUIItalicFont(_ font: UIFont) -> Bool {
-        let traits = font.fontDescriptor.symbolicTraits
-        return traits.contains(.traitItalic)
-            || font.fontName.lowercased().contains("italic")
-            || font.fontName.lowercased().contains("oblique")
-    }
-
-    private static func uiFontByApplyingItalic(_ font: UIFont, size: CGFloat) -> UIFont {
-        guard !isUIItalicFont(font) else { return font }
-        var traits = font.fontDescriptor.symbolicTraits
-        traits.insert(.traitItalic)
-        if let descriptor = font.fontDescriptor.withSymbolicTraits(traits) {
-            return UIFont(descriptor: descriptor, size: size)
-        }
-        return UIFont.italicSystemFont(ofSize: size)
-    }
-    #endif
-
-    private static func fontIdentifierMatches(_ lhs: String, _ rhs: String) -> Bool {
-        if lhs.caseInsensitiveCompare(rhs) == .orderedSame {
-            return true
-        }
-        let normalizedLhs = normalizedFontIdentifier(lhs)
-        let normalizedRhs = normalizedFontIdentifier(rhs)
-        if !normalizedLhs.isEmpty && normalizedLhs == normalizedRhs {
-            return true
-        }
-        let compactLhs = compactFontIdentifier(lhs)
-        let compactRhs = compactFontIdentifier(rhs)
-        return !compactLhs.isEmpty && compactLhs == compactRhs
-    }
-
-    private static func normalizedFontIdentifier(_ value: String) -> String {
-        value
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased()
-            .replacingOccurrences(
-                of: "[^a-z0-9]+",
-                with: "_",
-                options: .regularExpression
-            )
-            .trimmingCharacters(in: CharacterSet(charactersIn: "_"))
-    }
-
-    private static func compactFontIdentifier(_ value: String) -> String {
-        value
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased()
-            .replacingOccurrences(
-                of: "[^a-z0-9]+",
-                with: "",
-                options: .regularExpression
-            )
+        return RaTeXInlineLayout.attributedString(
+            content: content,
+            style: style,
+            textColor: textColor
+        ) { [self] latex in makeFormulaAttachment(latex) }
     }
 
     private func makeFormulaAttachment(_ latex: String) -> RaTeXTextAttachment? {
@@ -510,63 +244,6 @@ public class RaTeXInlineView: PlatformView {
         } catch {
             return nil
         }
-    }
-
-    // MARK: - Parsing
-
-    enum Segment {
-        case text(String)
-        case formula(String)
-    }
-
-    static func parseContent(_ content: String) -> [Segment] {
-        var segments: [Segment] = []
-        var current = ""
-        var inFormula = false
-        var index = content.startIndex
-
-        while index < content.endIndex {
-            let ch = content[index]
-            let nextIndex = content.index(after: index)
-            if ch == "\\", nextIndex < content.endIndex, content[nextIndex] == "$" {
-                if inFormula {
-                    current.append("\\$")
-                } else {
-                    current.append("$")
-                }
-                index = content.index(after: nextIndex)
-                continue
-            }
-
-            if ch == "$" {
-                if inFormula {
-                    if !current.isEmpty {
-                        segments.append(.formula(current))
-                    } else {
-                        segments.append(.text("$$"))
-                    }
-                    current = ""
-                    inFormula = false
-                } else {
-                    if !current.isEmpty {
-                        segments.append(.text(current))
-                    }
-                    current = ""
-                    inFormula = true
-                }
-            } else {
-                current.append(ch)
-            }
-            index = nextIndex
-        }
-
-        if inFormula {
-            segments.append(.text("$\(current)"))
-        } else if !current.isEmpty {
-            segments.append(.text(current))
-        }
-
-        return segments
     }
 
     // MARK: - Appearance changes

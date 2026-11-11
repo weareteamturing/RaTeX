@@ -1,5 +1,5 @@
 import React, {useCallback, useContext, useEffect, useMemo, useState} from 'react';
-import {StyleSheet} from 'react-native';
+import {Platform, StyleSheet} from 'react-native';
 import type {ColorValue, StyleProp, TextStyle, ViewStyle} from 'react-native';
 import RaTeXInlineViewNativeComponent from './RaTeXInlineViewNativeComponent';
 import {RaTeXColorContext} from './RaTeXView';
@@ -26,6 +26,15 @@ export interface InlineTeXProps {
    */
   onContentSizeChange?: (size: {width: number; height: number}) => void;
 }
+
+// On iOS with the New Architecture the native shadow node measures the text during Yoga
+// layout (RaTeXInlineViewManager.mm), so the height is right on the commit that changes the
+// content. A JS minHeight on top of that would only get in the way: the one-line estimate can
+// be taller than the real line, and the last reported height lingers for a commit after the
+// content shrinks.
+const nativeMeasures =
+  Platform.OS === 'ios' &&
+  (globalThis as {nativeFabricUIManager?: unknown}).nativeFabricUIManager != null;
 
 /**
  * Renders a mixed string of plain text and `$...$` LaTeX formulas inline.
@@ -114,18 +123,19 @@ export function InlineTeX({
     ? (contentSize ? contentSize.height : estimatedHeight)
     : 0;
 
-  // The native view has no Yoga measure function, so without an explicit width
-  // Yoga defaults to 0.  Always stretch to fill the parent (matching how RN's
-  // <Text> behaves for wrapping content) unless the caller sets width or
-  // alignSelf explicitly.
+  // Always stretch to fill the parent (matching how RN's <Text> behaves for
+  // wrapping content) unless the caller sets width or alignSelf explicitly.
+  // Without a native measure function (Android, old architecture) Yoga would
+  // otherwise give the view a width of 0.
   const stretchFallback =
     !hasExplicitWidth && !hasExplicitAlignSelf
       ? {alignSelf: 'stretch' as const}
       : null;
 
-  const resolvedStyle = hasHeight
-    ? [style, stretchFallback]
-    : [style, stretchFallback, {minHeight: heightValue}];
+  const resolvedStyle =
+    hasHeight || nativeMeasures
+      ? [style, stretchFallback]
+      : [style, stretchFallback, {minHeight: heightValue}];
 
   return (
     <RaTeXInlineViewNativeComponent

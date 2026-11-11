@@ -92,9 +92,14 @@ class RaTeXTextAttachment: NSTextAttachment {
         // resampled when TextKit composites it, which softens every edge (measured: fewer fully
         // black pixels and more mid-grays than the same glyphs drawn by WebKit).
         let scale = UIScreen.main.scale
-        let snapUp = { (v: CGFloat) in ceil(v * scale) / scale }
-        let snap = { (v: CGFloat) in (v * scale).rounded() / scale }
-        let bitmapSize = CGSize(width: snapUp(size.width), height: snapUp(size.height))
+        // RaTeXInlineMeasure computes the same bounds off the main thread.
+        let snapped = RaTeXInlineLayout.attachmentBounds(
+            width: size.width,
+            totalHeight: size.height,
+            depth: renderer.depth,
+            scale: scale
+        )
+        let bitmapSize = snapped.size
 
         let format = UIGraphicsImageRendererFormat()
         format.scale = scale
@@ -105,7 +110,7 @@ class RaTeXTextAttachment: NSTextAttachment {
 
         // origin.y = -depth shifts the image down so the formula baseline
         // (at `height` from the top) aligns with the text baseline.
-        self.bounds = CGRect(x: 0, y: -snap(renderer.depth), width: bitmapSize.width, height: bitmapSize.height)
+        self.bounds = snapped
         #endif
     }
 
