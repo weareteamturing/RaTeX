@@ -45,6 +45,11 @@ public class RaTeXView: PlatformView {
     /// Called when a render error occurs (e.g. invalid LaTeX).
     public var onError: ((Error) -> Void)?
 
+    /// The error from the most recent render, or nil if it succeeded. Lets a host that attaches
+    /// its listener after the render (React Native Fabric mounts props before the event emitter)
+    /// still learn that the view is showing nothing because the input failed to parse.
+    public private(set) var lastError: Error?
+
     // MARK: Private state
 
     private var renderer: RaTeXRenderer?
@@ -166,9 +171,17 @@ public class RaTeXView: PlatformView {
             )
             #endif
             renderer = RaTeXRenderer(displayList: dl, fontSize: fontSize)
+            lastError = nil
             invalidateIntrinsicContentSize()
             platformSetNeedsDisplay()
         } catch {
+            // Drop the previous formula. Keeping it left the old drawing on screen and kept
+            // reporting its size, so a view reused for an unparsable input showed the formula
+            // it had rendered before.
+            renderer = nil
+            lastError = error
+            invalidateIntrinsicContentSize()
+            platformSetNeedsDisplay()
             onError?(error)
         }
     }

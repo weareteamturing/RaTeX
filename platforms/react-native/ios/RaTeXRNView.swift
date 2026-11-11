@@ -90,6 +90,13 @@ public class RaTeXRNView: PlatformView {
         innerView.onError = { error in handler(error.localizedDescription) }
     }
 
+    /// Message of the error from the most recent render, nil if it succeeded. Fabric sets props
+    /// before it attaches the event emitter, so the component view reads this to deliver an
+    /// error that happened while no listener was attached.
+    @objc public var renderErrorMessage: String? {
+        innerView.lastError?.localizedDescription
+    }
+
     /// Old-arch: set by RN via KVC. Called with @{ @"width": @(w), @"height": @(h) }.
     @objc public var onContentSizeChange: ((NSDictionary?) -> Void)? {
         didSet {

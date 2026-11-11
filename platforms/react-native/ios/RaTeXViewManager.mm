@@ -96,6 +96,12 @@ using RaTeXViewMeasuringComponentDescriptor =
 
 @implementation RaTeXViewComponentView {
   RaTeXRNView *_nativeView;
+  // An onError that has not reached JS yet. Fabric mounts a view by calling updateProps
+  // before updateEventEmitter, and prepareForRecycle clears the emitter, so a parse error
+  // raised while props are applied would otherwise be dropped. It is sent from
+  // finalizeUpdates, which runs after the emitter is attached.
+  BOOL _errorPending;
+  BOOL _applyingProps;
 }
 
 + (ComponentDescriptorProvider)componentDescriptorProvider
@@ -120,13 +126,13 @@ using RaTeXViewMeasuringComponentDescriptor =
     __weak RaTeXViewComponentView *weakSelf = self;
     [_nativeView setErrorCallback:^(NSString *errorMsg) {
       RaTeXViewComponentView *strongSelf = weakSelf;
-      if (!strongSelf || !strongSelf->_eventEmitter) return;
-      auto emitter = std::dynamic_pointer_cast<const RaTeXViewEventEmitter>(
-          strongSelf->_eventEmitter);
-      if (emitter) {
-        RaTeXViewEventEmitter::OnError event{
-            .error = std::string(errorMsg.UTF8String ?: "")};
-        emitter->onError(event);
+      if (!strongSelf) return;
+      strongSelf->_errorPending = YES;
+      // During updateProps the emitter may be missing (first mount) or still belong to the
+      // previous mount; finalizeUpdates delivers it. Outside a props update (e.g. a
+      // light/dark change re-renders) deliver right away.
+      if (!strongSelf->_applyingProps) {
+        [strongSelf deliverPendingError];
       }
     }];
     [_nativeView setContentSizeCallback:^(CGFloat width, CGFloat height) {
@@ -146,10 +152,27 @@ using RaTeXViewMeasuringComponentDescriptor =
   return self;
 }
 
+- (void)deliverPendingError
+{
+  if (!_errorPending) return;
+  NSString *message = _nativeView.renderErrorMessage;
+  if (message == nil) {
+    // A later render succeeded; the error is no longer what the view shows.
+    _errorPending = NO;
+    return;
+  }
+  auto emitter = std::dynamic_pointer_cast<const RaTeXViewEventEmitter>(_eventEmitter);
+  if (!emitter) return;
+  _errorPending = NO;
+  RaTeXViewEventEmitter::OnError event{.error = std::string(message.UTF8String ?: "")};
+  emitter->onError(event);
+}
+
 - (void)updateProps:(Props::Shared const &)props
            oldProps:(Props::Shared const &)oldProps
 {
   const auto &newProps = *std::static_pointer_cast<const RaTeXViewProps>(props);
+  _applyingProps = YES;
 
   NSString *latex = [NSString stringWithUTF8String:newProps.latex.c_str()];
   if (![latex isEqualToString:_nativeView.latex]) {
@@ -175,8 +198,23 @@ using RaTeXViewMeasuringComponentDescriptor =
       (color != nil && ![color isEqual:_nativeView.color])) {
     _nativeView.color = color;
   }
+  _applyingProps = NO;
 
   [super updateProps:props oldProps:oldProps];
+}
+
+- (void)finalizeUpdates:(RNComponentViewUpdateMask)updateMask
+{
+  [super finalizeUpdates:updateMask];
+  [self deliverPendingError];
+}
+
+- (void)prepareForRecycle
+{
+  [super prepareForRecycle];
+  // The next mount may set the same latex, which skips the setter and re-parses nothing.
+  // If this view is in an error state, the new listener still has to hear about it.
+  _errorPending = _nativeView.renderErrorMessage != nil;
 }
 
 // When JS remounts (e.g. Fast Refresh or key changes), Fabric can reuse the same
