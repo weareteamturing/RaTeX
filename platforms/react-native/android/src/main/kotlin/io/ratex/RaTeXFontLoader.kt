@@ -14,6 +14,10 @@ import java.util.concurrent.atomic.AtomicBoolean
 object RaTeXFontLoader {
 
     private val fontsLoaded = AtomicBoolean(false)
+
+    /** True once [ensureLoaded] or [loadFromAssets] has run. */
+    @JvmStatic
+    val isLoaded: Boolean get() = fontsLoaded.get()
     private val loadLock = Any()
 
     /** KaTeX font IDs (Rust FontId.as_str()) → TTF filename without path. */

@@ -3,24 +3,19 @@
 // Content is parsed for $...$ delimiters. Each formula is laid out via RaTeXEngine,
 // wrapped in a RaTeXFormulaSpan (ReplacementSpan), and embedded in a SpannableString.
 // Android's StaticLayout handles word-wrapping and line-breaking at character level.
+// The spannable and the StaticLayout come from RaTeXInlineLayout, which the Fabric measure
+// (RaTeXInlineViewManager.measure) uses too.
 
 package io.ratex
 
 import android.content.Context
-import android.content.res.AssetManager
 import android.graphics.Canvas
 import android.graphics.Color
-import android.graphics.Typeface
-import android.text.Layout
 import android.text.SpannableStringBuilder
-import android.text.StaticLayout
 import android.text.TextPaint
 import android.util.AttributeSet
 import android.view.View
 import androidx.annotation.ColorInt
-import com.facebook.react.common.assets.ReactFontManager
-import java.util.concurrent.ConcurrentHashMap
-import java.util.Locale
 import kotlin.math.max
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -120,7 +115,7 @@ class RaTeXInlineView @JvmOverloads constructor(
     // MARK: - Private state
 
     private var currentSpannable: SpannableStringBuilder? = null
-    private var staticLayout: StaticLayout? = null
+    private var staticLayout: RaTeXInlineTextLayout? = null
     private val textPaint = TextPaint(TextPaint.ANTI_ALIAS_FLAG)
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
     private var buildJob: Job? = null
@@ -132,7 +127,7 @@ class RaTeXInlineView @JvmOverloads constructor(
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
         val layout = ensureMeasuredLayout(widthMeasureSpec)
         val desiredWidth = max(
-            (layout?.width ?: 0) + paddingLeft + paddingRight,
+            (layout?.layout?.width ?: 0) + paddingLeft + paddingRight,
             suggestedMinimumWidth,
         )
         val desiredHeight = max(
@@ -170,7 +165,37 @@ class RaTeXInlineView @JvmOverloads constructor(
 
     // MARK: - Private
 
+    private fun currentStyle() = RaTeXInlineTextStyle(
+        formulaFontSize = formulaFontSize,
+        textFontSize = textFontSize,
+        textFontFamily = textFontFamily,
+        textLineHeight = textLineHeight,
+        textItalic = textItalic,
+        textUnderline = textUnderline,
+        textLineThrough = textLineThrough,
+    )
+
+    private var rebuildPending = false
+
+    /**
+     * Props that change the spannable only mark it stale; [commitProps] rebuilds once. The view
+     * managers call it from onAfterUpdateTransaction, after all props of an update are set, so
+     * one update parses the formulas once instead of once per changed prop. The posted call
+     * covers use outside a view manager.
+     */
     private fun rebuild() {
+        if (rebuildPending) return
+        rebuildPending = true
+        post { commitProps() }
+    }
+
+    fun commitProps() {
+        if (!rebuildPending) return
+        rebuildPending = false
+        performRebuild()
+    }
+
+    private fun performRebuild() {
         buildJob?.cancel()
         if (content.isBlank()) {
             currentSpannable = null
@@ -181,14 +206,41 @@ class RaTeXInlineView @JvmOverloads constructor(
             invalidate()
             return
         }
-        buildJob = scope.launch {
-            withContext(Dispatchers.IO) { RaTeXFontLoader.ensureLoaded(context) }
-            val spannable = buildSpannable()
-            currentSpannable = spannable
-            lastLayoutWidth = -1
-            lastReportedSize = Pair(0.0, 0.0)
-            rebuildLayout()
+        val content = content
+        val formulaFontSize = formulaFontSize
+        val formulaColor = formulaColor
+        val density = context.resources.displayMetrics.density
+        if (RaTeXFontLoader.isLoaded) {
+            // Build in the same frame as the props update. Fabric has already laid the view out
+            // at the height RaTeXInlineViewManager.measure computed for the new content; an
+            // asynchronous build drew the previous text in that box for a frame.
+            applySpannable(
+                RaTeXInlineLayout.buildSpannable(content, formulaFontSize, formulaColor, density) {
+                    RaTeXFontLoader.getTypeface(it)
+                },
+            )
+            return
         }
+        // First use: load the KaTeX fonts off the main thread.
+        buildJob = scope.launch {
+            val spannable = withContext(Dispatchers.Default) {
+                RaTeXFontLoader.ensureLoaded(context)
+                RaTeXInlineLayout.buildSpannable(
+                    content,
+                    formulaFontSize,
+                    formulaColor,
+                    density,
+                ) { RaTeXFontLoader.getTypeface(it) }
+            }
+            applySpannable(spannable)
+        }
+    }
+
+    private fun applySpannable(spannable: SpannableStringBuilder) {
+        currentSpannable = spannable
+        lastLayoutWidth = -1
+        lastReportedSize = Pair(0.0, 0.0)
+        rebuildLayout()
     }
 
     private fun rebuildLayout() {
@@ -203,69 +255,36 @@ class RaTeXInlineView @JvmOverloads constructor(
         lastLayoutWidth = availWidth
 
         val density = context.resources.displayMetrics.density
-        applyTextPaint(density)
-
-        val layout = StaticLayout.Builder
-            .obtain(spannable, 0, spannable.length, textPaint, availWidth)
-            .setAlignment(android.text.Layout.Alignment.ALIGN_NORMAL)
-            .setLineSpacing(extraLineSpacing(density), 1f)
-            .setIncludePad(true)
-            .build()
+        val style = currentStyle()
+        RaTeXInlineLayout.applyTextPaint(textPaint, context, style, inlineTextColor, density)
+        val layout = RaTeXInlineLayout.buildLayout(spannable, textPaint, availWidth, style, density)
 
         staticLayout = layout
         requestLayout()
         invalidate()
 
-        val widthDp = usedWidthPx(layout) / density
-        val heightDp = layout.height.toDouble() / density
-        reportContentSize(widthDp, heightDp)
+        reportContentSize(
+            RaTeXInlineLayout.usedWidthPx(layout).toDouble() / density,
+            layout.height.toDouble() / density,
+        )
     }
 
-    /**
-     * 실제 글이 차지한 폭(가장 긴 줄). iOS 가 usedRect.width 로 보고하는 것과 같은 값이다.
-     * StaticLayout.width 는 쪼갤 때 준 컨테이너 폭이라, 한 줄짜리 짧은 내용도 컨테이너 폭으로 보고돼
-     * 호출측이 "자연 폭"을 알 수 없었다.
-     */
-    private fun usedWidthPx(layout: StaticLayout): Double {
-        var max = 0f
-        for (i in 0 until layout.lineCount) {
-            max = maxOf(max, layout.getLineWidth(i))
-        }
-        return Math.ceil(max.toDouble())
-    }
-
-    /**
-     * StaticLayout 은 줄높이를 직접 못 받는다. 요청 줄높이에서 폰트가 스스로 쓰는
-     * 행간을 뺀 나머지를 줄 사이 여백으로 넘긴다. 요청값이 자연 행간보다 작으면 0 —
-     * 글자가 겹치게 만들지는 않는다.
-     */
-    private fun extraLineSpacing(density: Float): Float {
-        if (textLineHeight <= 0f) return 0f
-        val fm = textPaint.fontMetrics
-        val natural = fm.descent - fm.ascent
-        val requested = textLineHeight * density
-        return (requested - natural).coerceAtLeast(0f)
-    }
-
-    private fun ensureMeasuredLayout(widthMeasureSpec: Int): StaticLayout? {
+    private fun ensureMeasuredLayout(widthMeasureSpec: Int): RaTeXInlineTextLayout? {
         val spannable = currentSpannable ?: return null
         val widthMode = MeasureSpec.getMode(widthMeasureSpec)
         val widthSize = MeasureSpec.getSize(widthMeasureSpec)
         val horizontalPadding = paddingLeft + paddingRight
         val density = context.resources.displayMetrics.density
-        applyTextPaint(density)
+        val style = currentStyle()
+        RaTeXInlineLayout.applyTextPaint(textPaint, context, style, inlineTextColor, density)
 
         val targetWidth = when (widthMode) {
             MeasureSpec.EXACTLY -> (widthSize - horizontalPadding).coerceAtLeast(1)
             MeasureSpec.AT_MOST -> {
                 val maxWidth = (widthSize - horizontalPadding).coerceAtLeast(1)
-                val desired = Layout.getDesiredWidth(spannable, textPaint).toInt().coerceAtLeast(1)
-                minOf(desired, maxWidth)
+                minOf(RaTeXInlineLayout.desiredWidthPx(spannable, textPaint), maxWidth)
             }
-            else -> {
-                val desired = Layout.getDesiredWidth(spannable, textPaint)
-                desired.toInt().coerceAtLeast(1)
-            }
+            else -> RaTeXInlineLayout.desiredWidthPx(spannable, textPaint)
         }
 
         val cachedLayout = staticLayout
@@ -273,27 +292,39 @@ class RaTeXInlineView @JvmOverloads constructor(
             return cachedLayout
         }
 
-        val measuredLayout = StaticLayout.Builder
-            .obtain(spannable, 0, spannable.length, textPaint, targetWidth)
-            .setAlignment(android.text.Layout.Alignment.ALIGN_NORMAL)
-            .setLineSpacing(extraLineSpacing(density), 1f)
-            .setIncludePad(true)
-            .build()
+        val measuredLayout =
+            RaTeXInlineLayout.buildLayout(spannable, textPaint, targetWidth, style, density)
 
         staticLayout = measuredLayout
         lastLayoutWidth = targetWidth
 
-        val widthDp = usedWidthPx(measuredLayout) / density
-        val heightDp = measuredLayout.height.toDouble() / density
-        reportContentSize(widthDp, heightDp)
+        reportContentSize(
+            RaTeXInlineLayout.usedWidthPx(measuredLayout).toDouble() / density,
+            measuredLayout.height.toDouble() / density,
+        )
         return measuredLayout
     }
 
+    private var pendingReport: Pair<Double, Double>? = null
+
+    /**
+     * The size is sent after the current mount transaction, not from inside it. Fabric sets
+     * the props before it applies the new frame, so a layout made while the props are applied
+     * uses the old width; reporting it right away sent a transient size (measured: 72dp for a
+     * one-line string laid out at the previous, narrower width) before the real one.
+     */
     private fun reportContentSize(widthDp: Double, heightDp: Double) {
-        val size = Pair(widthDp, heightDp)
+        val first = pendingReport == null
+        pendingReport = Pair(widthDp, heightDp)
+        if (first) post { flushContentSize() }
+    }
+
+    private fun flushContentSize() {
+        val size = pendingReport ?: return
+        pendingReport = null
         if (size != lastReportedSize) {
             lastReportedSize = size
-            onContentSizeChange?.invoke(widthDp, heightDp)
+            onContentSizeChange?.invoke(size.first, size.second)
         }
     }
 
@@ -301,236 +332,5 @@ class RaTeXInlineView @JvmOverloads constructor(
         lastLayoutWidth = -1
         if (currentSpannable == null) return
         rebuildLayout()
-    }
-
-    private fun applyTextPaint(density: Float) {
-        textPaint.textSize = textFontSize * density
-        textPaint.color = inlineTextColor
-        val style = if (textItalic) Typeface.ITALIC else Typeface.NORMAL
-        textPaint.typeface = resolveTextTypeface(style)
-        textPaint.isUnderlineText = textUnderline
-        textPaint.isStrikeThruText = textLineThrough
-    }
-
-    private fun resolveTextTypeface(style: Int): Typeface {
-        val family = textFontFamily ?: return Typeface.defaultFromStyle(style)
-        loadTextTypefaceFromAssets(context.assets, family, style)?.let { return it }
-        // ReactFontManager handles runtime-registered fonts (e.g. expo-font) and
-        // falls back to Typeface.create() internally — it does not throw.
-        return ReactFontManager.getInstance().getTypeface(family, style, context.assets)
-    }
-
-    private fun loadTextTypefaceFromAssets(
-        assetManager: AssetManager,
-        family: String,
-        style: Int,
-    ): Typeface? {
-        val cacheKey = "$family:$style"
-        textTypefaceCache[cacheKey]?.let { return it }
-
-        val candidates = textFontAssetCandidates(family, style)
-        for (dir in TEXT_FONT_ASSET_DIRS) {
-            for (candidate in candidates) {
-                for (extension in TEXT_FONT_FILE_EXTENSIONS) {
-                    val path = "$dir/${candidate.baseName}$extension"
-                    loadTypefaceFromAssetPath(assetManager, path, style, candidate.exactStyle)?.let {
-                        textTypefaceCache[cacheKey] = it
-                        return it
-                    }
-                }
-            }
-        }
-
-        for (dir in TEXT_FONT_ASSET_DIRS) {
-            val files = try {
-                assetManager.list(dir)?.toList().orEmpty()
-            } catch (_: Exception) {
-                emptyList()
-            }
-            if (files.isEmpty()) continue
-
-            for (candidate in candidates) {
-                val normalizedCandidate = normalizeFontAssetName(candidate.baseName)
-                val compactCandidate = compactFontAssetName(candidate.baseName)
-                val file = files.firstOrNull { assetName ->
-                    val extension = TEXT_FONT_FILE_EXTENSIONS.firstOrNull {
-                        assetName.endsWith(it, ignoreCase = true)
-                    }
-                    if (extension == null) {
-                        false
-                    } else {
-                        val assetBaseName = assetName.dropLast(extension.length)
-                        assetBaseName.equals(candidate.baseName, ignoreCase = true) ||
-                            (normalizedCandidate.isNotEmpty() &&
-                                normalizeFontAssetName(assetBaseName) == normalizedCandidate) ||
-                            (compactCandidate.isNotEmpty() &&
-                                compactFontAssetName(assetBaseName) == compactCandidate)
-                    }
-                } ?: continue
-
-                loadTypefaceFromAssetPath(assetManager, "$dir/$file", style, candidate.exactStyle)?.let {
-                    textTypefaceCache[cacheKey] = it
-                    return it
-                }
-            }
-        }
-        return null
-    }
-
-    private fun loadTypefaceFromAssetPath(
-        assetManager: AssetManager,
-        path: String,
-        style: Int,
-        exactStyle: Boolean,
-    ): Typeface? = try {
-        val typeface = Typeface.createFromAsset(assetManager, path)
-        if (exactStyle || style == Typeface.NORMAL) {
-            typeface
-        } else {
-            Typeface.create(typeface, style)
-        }
-    } catch (_: RuntimeException) {
-        null
-    }
-
-    private suspend fun buildSpannable(): SpannableStringBuilder {
-        val segments = parseContent(content)
-        val builder = SpannableStringBuilder()
-        val density = context.resources.displayMetrics.density
-        val formulaFontSizePx = formulaFontSize * density
-
-        for (segment in segments) {
-            when (segment) {
-                is Segment.Text -> builder.append(segment.content)
-                is Segment.Formula -> {
-                    val renderer = try {
-                        val dl = withContext(Dispatchers.Default) {
-                            RaTeXEngine.parseBlocking(
-                                segment.content,
-                                displayMode = false,
-                                color = formulaColor,
-                            )
-                        }
-                        RaTeXRenderer(dl, formulaFontSizePx) { RaTeXFontLoader.getTypeface(it) }
-                    } catch (_: Exception) {
-                        null
-                    }
-                    if (renderer != null && renderer.widthPx > 0) {
-                        val start = builder.length
-                        builder.append("\uFFFC")
-                        val end = builder.length
-                        builder.setSpan(
-                            RaTeXFormulaSpan(renderer),
-                            start, end,
-                            SpannableStringBuilder.SPAN_EXCLUSIVE_EXCLUSIVE,
-                        )
-                    } else {
-                        builder.append("\$${segment.content}\$")
-                    }
-                }
-            }
-        }
-        return builder
-    }
-
-    // MARK: - Parsing
-
-    sealed class Segment {
-        data class Text(val content: String) : Segment()
-        data class Formula(val content: String) : Segment()
-    }
-
-    companion object {
-        private val TEXT_FONT_ASSET_DIRS = listOf("font", "fonts")
-        private val TEXT_FONT_FILE_EXTENSIONS = listOf(".ttf", ".otf")
-        // Indices map to Android Typeface style constants: NORMAL=0, BOLD=1, ITALIC=2, BOLD_ITALIC=3.
-        private val TEXT_FONT_STYLE_SUFFIXES = listOf("", "_bold", "_italic", "_bold_italic")
-        private val textTypefaceCache = ConcurrentHashMap<String, Typeface>()
-        private val NON_FONT_ASSET_CHARS = Regex("[^a-z0-9]+")
-
-        private data class TextFontAssetCandidate(
-            val baseName: String,
-            val exactStyle: Boolean,
-        )
-
-        private fun textFontAssetCandidates(
-            family: String,
-            style: Int,
-        ): List<TextFontAssetCandidate> {
-            val suffix = TEXT_FONT_STYLE_SUFFIXES.getOrElse(style) { "" }
-            val baseNames = textFontBaseNameVariants(family)
-            val candidates = mutableListOf<TextFontAssetCandidate>()
-            if (suffix.isNotEmpty()) {
-                baseNames.forEach { candidates += TextFontAssetCandidate("$it$suffix", true) }
-            }
-            baseNames.forEach { candidates += TextFontAssetCandidate(it, suffix.isEmpty()) }
-            return candidates.distinctBy { "${it.baseName}:${it.exactStyle}" }
-        }
-
-        private fun textFontBaseNameVariants(family: String): List<String> {
-            val trimmed = family.trim()
-            val underscored = trimmed.replace('-', '_').replace(' ', '_')
-            val androidResourceName = normalizeFontAssetName(trimmed)
-            return listOf(trimmed, underscored, androidResourceName)
-                .filter { it.isNotEmpty() }
-                .distinct()
-        }
-
-        private fun normalizeFontAssetName(value: String): String =
-            NON_FONT_ASSET_CHARS
-                .replace(value.trim().lowercase(Locale.US), "_")
-                .trim('_')
-
-        private fun compactFontAssetName(value: String): String =
-            NON_FONT_ASSET_CHARS.replace(value.trim().lowercase(Locale.US), "")
-
-        fun parseContent(content: String): List<Segment> {
-            val segments = mutableListOf<Segment>()
-            val current = StringBuilder()
-            var inFormula = false
-            var index = 0
-
-            while (index < content.length) {
-                val ch = content[index]
-                if (ch == '\\' && index + 1 < content.length && content[index + 1] == '$') {
-                    if (inFormula) {
-                        current.append("\\$")
-                    } else {
-                        current.append('$')
-                    }
-                    index += 2
-                    continue
-                }
-
-                if (ch == '$') {
-                    if (inFormula) {
-                        if (current.isNotEmpty()) {
-                            segments.add(Segment.Formula(current.toString()))
-                        } else {
-                            segments.add(Segment.Text("\$\$"))
-                        }
-                        current.clear()
-                        inFormula = false
-                    } else {
-                        if (current.isNotEmpty()) {
-                            segments.add(Segment.Text(current.toString()))
-                        }
-                        current.clear()
-                        inFormula = true
-                    }
-                } else {
-                    current.append(ch)
-                }
-                index += 1
-            }
-
-            if (inFormula) {
-                segments.add(Segment.Text("\$$current"))
-            } else if (current.isNotEmpty()) {
-                segments.add(Segment.Text(current.toString()))
-            }
-
-            return segments
-        }
     }
 }

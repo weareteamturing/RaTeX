@@ -14,6 +14,21 @@ Size RaTeXViewMeasurementManager::measure(
     SurfaceId surfaceId,
     LayoutConstraints layoutConstraints,
     const RaTeXViewProps& props) const {
+  return measure(surfaceId, layoutConstraints, "RaTeXView", toDynamic(props));
+}
+
+Size RaTeXViewMeasurementManager::measure(
+    SurfaceId surfaceId,
+    LayoutConstraints layoutConstraints,
+    const RaTeXInlineViewProps& props) const {
+  return measure(surfaceId, layoutConstraints, "RaTeXInlineView", toDynamic(props));
+}
+
+Size RaTeXViewMeasurementManager::measure(
+    SurfaceId surfaceId,
+    LayoutConstraints layoutConstraints,
+    const char* componentNameValue,
+    const folly::dynamic& serializedProps) const {
   const jni::global_ref<jobject>& fabricUIManager =
       contextContainer_->at<jni::global_ref<jobject>>("FabricUIManager");
 
@@ -33,9 +48,8 @@ Size RaTeXViewMeasurementManager::measure(
   auto minimumSize = layoutConstraints.minimumSize;
   auto maximumSize = layoutConstraints.maximumSize;
 
-  local_ref<JString> componentName = make_jstring("RaTeXView");
+  local_ref<JString> componentName = make_jstring(componentNameValue);
 
-  auto serializedProps = toDynamic(props);
   local_ref<ReadableNativeMap::javaobject> propsRNM =
       ReadableNativeMap::newObjectCxxArgs(serializedProps);
   local_ref<ReadableMap::javaobject> propsRM =

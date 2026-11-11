@@ -27,13 +27,14 @@ export interface InlineTeXProps {
   onContentSizeChange?: (size: {width: number; height: number}) => void;
 }
 
-// On iOS with the New Architecture the native shadow node measures the text during Yoga
-// layout (RaTeXInlineViewManager.mm), so the height is right on the commit that changes the
+// With the New Architecture the native shadow node measures the text during Yoga layout
+// (iOS: RaTeXInlineViewManager.mm, Android: RaTeXInlineViewMeasuringShadowNode +
+// RaTeXInlineViewManager.measure), so the height is right on the commit that changes the
 // content. A JS minHeight on top of that would only get in the way: the one-line estimate can
 // be taller than the real line, and the last reported height lingers for a commit after the
-// content shrinks.
+// content shrinks. The old architecture has no measure function and keeps the JS height.
 const nativeMeasures =
-  Platform.OS === 'ios' &&
+  (Platform.OS === 'ios' || Platform.OS === 'android') &&
   (globalThis as {nativeFabricUIManager?: unknown}).nativeFabricUIManager != null;
 
 /**
@@ -116,8 +117,8 @@ export function InlineTeX({
 
   // Always stretch to fill the parent (matching how RN's <Text> behaves for
   // wrapping content) unless the caller sets width or alignSelf explicitly.
-  // Without a native measure function (Android, old architecture) Yoga would
-  // otherwise give the view a width of 0.
+  // Without a native measure function (old architecture) Yoga would otherwise
+  // give the view a width of 0.
   const stretchFallback =
     !hasExplicitWidth && !hasExplicitAlignSelf
       ? {alignSelf: 'stretch' as const}

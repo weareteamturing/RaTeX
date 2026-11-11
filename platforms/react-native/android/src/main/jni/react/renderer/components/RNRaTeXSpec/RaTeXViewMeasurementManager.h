@@ -1,5 +1,6 @@
 #pragma once
 
+#include <folly/dynamic.h>
 #include <react/renderer/components/RNRaTeXSpec/Props.h>
 #include <react/renderer/core/LayoutConstraints.h>
 #include <react/utils/ContextContainer.h>
@@ -21,7 +22,19 @@ class RaTeXViewMeasurementManager {
       LayoutConstraints layoutConstraints,
       const RaTeXViewProps& props) const;
 
+  // <RaTeXInlineView>: routes to RaTeXInlineViewManager.measure.
+  Size measure(
+      SurfaceId surfaceId,
+      LayoutConstraints layoutConstraints,
+      const RaTeXInlineViewProps& props) const;
+
  private:
+  Size measure(
+      SurfaceId surfaceId,
+      LayoutConstraints layoutConstraints,
+      const char* componentName,
+      const folly::dynamic& serializedProps) const;
+
   const std::shared_ptr<const ContextContainer> contextContainer_;
 };
 

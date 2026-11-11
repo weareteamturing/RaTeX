@@ -19,6 +19,11 @@ class RaTeXInlineViewManager(private val reactContext: ReactApplicationContext) 
 
     override fun getName(): String = NAME
 
+    override fun onAfterUpdateTransaction(view: RaTeXInlineView) {
+        super.onAfterUpdateTransaction(view)
+        view.commitProps()
+    }
+
     override fun createViewInstance(ctx: ThemedReactContext): RaTeXInlineView {
         val view = RaTeXInlineView(ctx)
         view.onContentSizeChange = { width, height ->
