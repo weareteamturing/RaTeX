@@ -137,6 +137,9 @@ public class RaTeXView: PlatformView {
     #if os(macOS)
     public override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
+        // An appearance change only re-resolves colors; input that failed to parse fails
+        // again, and re-rendering would report the same error a second time.
+        guard lastError == nil else { return }
         rerender()
     }
     #else
@@ -146,6 +149,10 @@ public class RaTeXView: PlatformView {
         guard traitCollection.hasDifferentColorAppearance(comparedTo: previousTraitCollection) else {
             return
         }
+        // An appearance change only re-resolves colors; input that failed to parse fails
+        // again, and re-rendering would report the same error a second time (seen when a view
+        // mounted with invalid LaTeX first joins the window).
+        guard lastError == nil else { return }
         rerender()
     }
     #endif
